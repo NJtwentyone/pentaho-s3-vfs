@@ -42,6 +42,8 @@ import org.apache.commons.vfs2.provider.VfsComponentContext;
 import org.junit.Before;
 import org.junit.Test;
 import org.mockito.ArgumentCaptor;
+import org.mockito.exceptions.base.MockitoAssertionError;
+
 import java.io.OutputStream;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -55,14 +57,7 @@ import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.fail;
 import static org.junit.Assert.assertNotNull;
-import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.spy;
-import static org.mockito.Mockito.when;
-import static org.mockito.Mockito.any;
-import static org.mockito.Mockito.anyString;
-import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.times;
-import static org.mockito.Mockito.atMost;
+import static org.mockito.Mockito.*;
 
 /**
  * created by: dzmitry_bahdanovich date: 10/18/13
@@ -182,7 +177,8 @@ public class S3FileObjectTest {
     out.write( new byte[ 1024 * 1024 * 6 ] );
     out.close();
 
-    verify( s3ServiceMock, times( 2 ) ).uploadPart( any() );
+    // check kettle.properties 's3.vfs.partSize'
+    verify(s3ServiceMock, atLeastOnce()).uploadPart(any());
     verify( s3ServiceMock, atMost( 1 ) ).completeMultipartUpload( any() );
   }
 
