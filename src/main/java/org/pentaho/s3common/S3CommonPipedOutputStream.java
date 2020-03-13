@@ -52,16 +52,11 @@ public class S3CommonPipedOutputStream extends PipedOutputStream {
   private static final Class<?> PKG = S3CommonPipedOutputStream.class;
   private static final Logger logger = LoggerFactory.getLogger( S3CommonPipedOutputStream.class );
   private static final LogChannelInterface consoleLog = new LogChannel( BaseMessages.getString( PKG, "TITLE.S3File" ) );
+
   /**
-   * Minimum part size specified in documentation
-   * see https://docs.aws.amazon.com/AmazonS3/latest/dev/qfacts.html
+   * set to aws multipart minimum 5MB.
    */
-  private static final String MIN_PART_SIZE = "5MB";
-  /**
-   * Maximum part size specified in documentation
-   * see https://docs.aws.amazon.com/AmazonS3/latest/dev/qfacts.html
-   */
-  private static final String MAX_PART_SIZE = "5GB";
+  private static final int DEFAULT_PART_SIZE = 5 * 1024 * 1024;
   private ThreadPoolExecutor executor = (ThreadPoolExecutor) Executors.newFixedThreadPool( 1 );
   private boolean initialized = false;
   private boolean blockedUntilDone = true;
@@ -71,54 +66,30 @@ public class S3CommonPipedOutputStream extends PipedOutputStream {
   private Future<Boolean> result = null;
   private String bucketId;
   private String key;
+  /**
+   * AWS Multipart part size.
+   */
   private int partSize;
-  protected StorageUnitConverter storageUnitConverter;
-  protected S3KettleProperty s3KettleProperty;
 
-  public S3CommonPipedOutputStream( S3CommonFileSystem fileSystem, String bucketId, String key ) throws IOException {
+  public S3CommonPipedOutputStream( S3CommonFileSystem fileSystem, String bucketId, String key) throws IOException {
+    this( fileSystem, bucketId, key, DEFAULT_PART_SIZE );
+  }
+
+  public S3CommonPipedOutputStream( S3CommonFileSystem fileSystem, String bucketId, String key, int partSize ) throws IOException {
     this.pipedInputStream = new PipedInputStream();
 
     try {
       this.pipedInputStream.connect( this );
     } catch ( IOException e ) {
       // FATAL, unexpected
-      throw new RuntimeException( e );
+      throw new IOException( "could not connect to pipedInputStream", e );
     }
 
     this.s3AsyncTransferRunner = new S3AsyncTransferRunner();
     this.bucketId = bucketId;
     this.key = key;
     this.fileSystem = fileSystem;
-    this.storageUnitConverter = new StorageUnitConverter();
-    this.s3KettleProperty = new S3KettleProperty();
-    this.partSize = readPartSize();
-  }
-
-  protected int readPartSize() {
-    long parsedPartSize = parsePartSize( s3KettleProperty.getPartSize() );
-    return convertToInt( parsedPartSize );
-  }
-
-  protected int convertToInt( long parsedPartSize ) {
-    return (int) Long.min( Integer.MAX_VALUE, parsedPartSize );
-  }
-
-  protected long parsePartSize( String partSizeString ) {
-    long parsePartSize = convertToLong( partSizeString );
-    if ( parsePartSize < convertToLong( MIN_PART_SIZE ) ) {
-      consoleLog.logBasic( BaseMessages.getString( PKG, "WARN.S3MultiPart.DefaultPartSize", partSizeString, MIN_PART_SIZE ) );
-      parsePartSize = convertToLong( MIN_PART_SIZE );
-    }
-
-    // still allow > 5GB, api might be updated in the future
-    if ( parsePartSize > convertToLong( MAX_PART_SIZE ) ) {
-      consoleLog.logBasic( BaseMessages.getString( PKG, "WARN.S3MultiPart.MaximumPartSize", partSizeString, MAX_PART_SIZE ) );
-    }
-    return parsePartSize;
-  }
-
-  protected long convertToLong( String partSize ) {
-    return storageUnitConverter.displaySizeToByteCount( partSize );
+    this.partSize = partSize;
   }
 
   private void initializeWrite() {
@@ -232,7 +203,6 @@ public class S3CommonPipedOutputStream extends PipedOutputStream {
           .withInputStream( s3is )
           .withLastPart( true );
 
-
         logger.info( BaseMessages.getString( PKG, "INFO.S3MultiPart.Upload", partNum - 1, offset, totalRead ) );
         partETags.add( fileSystem.getS3Client().uploadPart( uploadRequest ).getPartETag() );
 
@@ -244,11 +214,11 @@ public class S3CommonPipedOutputStream extends PipedOutputStream {
         fileSystem.getS3Client().completeMultipartUpload( compRequest );
       } catch ( OutOfMemoryError oome ) {
         consoleLog.logError( BaseMessages.getString( PKG,
-          "ERROR.S3MultiPart.UploadOutOfMemory", storageUnitConverter.byteCountToDisplaySize( partSize ) ),
+          "ERROR.S3MultiPart.UploadOutOfMemory", new StorageUnitConverter().byteCountToDisplaySize( partSize ) ),
           oome );
         returnVal = false;
       } catch ( Exception e ) {
-        e.printStackTrace(); // TODO see where this logs to and logger/consoleLog
+        e.printStackTrace();
         if ( initResponse == null ) {
           close();
         } else {
